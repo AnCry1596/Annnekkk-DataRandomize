@@ -21,10 +21,12 @@ use std::path::{Path, PathBuf};
 /// Insert in batches — one 271k-document insert_many would exceed the BSON limit.
 const BATCH: usize = 5_000;
 
-/// Repo to pull data.zip from, as "owner/name". No default — this project has no
-/// GitHub home yet, and a guessed slug would fail in a confusing way. Set
-/// DATA_REPO (or DATA_URL for a direct link), or just keep data/ populated.
-const REPO_ENV: &str = "AnCry1596/Annnekkk-DataRandomize";
+/// Repo to pull data.zip from, as "owner/name". Override with DATA_REPO, or point
+/// DATA_URL at an archive directly.
+const DEFAULT_REPO: &str = "AnCry1596/Annnekkk-DataRandomize";
+
+/// Environment variable that overrides DEFAULT_REPO.
+const REPO_ENV: &str = "DATA_REPO";
 
 /// Asset name looked for on the release.
 const ASSET: &str = "data.zip";
@@ -52,8 +54,9 @@ fn parse_args() -> Result<Args> {
                 println!("  --force  reload collections that already have documents");
                 println!("  --dir    source directory of *.json dumps (default: data)");
                 println!();
-                println!("If the source directory has no dumps, {} is downloaded from:", ASSET);
-                println!("  DATA_REPO=owner/name   latest GitHub release of that repo");
+                println!("If the source directory has no dumps, {} is downloaded from the", ASSET);
+                println!("latest GitHub release of {}. Override with:", DEFAULT_REPO);
+                println!("  DATA_REPO=owner/name   a different repo's latest release");
                 println!("  DATA_URL=https://…     a direct link to the archive");
                 std::process::exit(0);
             }
@@ -133,17 +136,7 @@ fn download_data(dir: &Path) -> Result<()> {
             u
         }
         Err(_) => {
-            let repo = std::env::var(REPO_ENV).map_err(|_| {
-                anyhow::anyhow!(
-                    "{dir} has no *.json dumps and there is nowhere to fetch them from.\n\
-                     Either populate it with `dump`, or point seed at an archive:\n  \
-                     {repo_env}=owner/name   (downloads {asset} from that repo's latest release)\n  \
-                     DATA_URL=https://…/{asset}",
-                    dir = dir.display(),
-                    repo_env = REPO_ENV,
-                    asset = ASSET,
-                )
-            })?;
+            let repo = std::env::var(REPO_ENV).unwrap_or_else(|_| DEFAULT_REPO.to_string());
             println!("{}", announced);
             println!("  looking up latest release of {}", repo);
             latest_asset_url(&repo)?

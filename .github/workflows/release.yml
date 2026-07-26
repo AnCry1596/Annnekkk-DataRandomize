@@ -8,6 +8,10 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# Read-only by default; the jobs that publish a Release opt into contents: write.
+permissions:
+  contents: read
+
 jobs:
   check:
     name: test (${{ matrix.os }})
@@ -17,13 +21,13 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
 
-      # The 16 tests here need no database — they use warp::test and an
+      # The tests here need no database — they use warp::test and an
       # unreachable Mongo URI, so CI stays hermetic.
       - run: cargo test --all-targets
       - run: cargo clippy --all-targets -- -D warnings
@@ -32,6 +36,10 @@ jobs:
     name: release (${{ matrix.target }})
     needs: check
     runs-on: ${{ matrix.os }}
+    # Required for softprops/action-gh-release to create/update the Release;
+    # without it GITHUB_TOKEN is read-only and the API returns 403.
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -43,7 +51,7 @@ jobs:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -75,7 +83,7 @@ jobs:
           done
           ls -la dist
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: ${{ matrix.target }}
           path: dist/*
@@ -106,8 +114,10 @@ jobs:
   data:
     name: data.zip
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Zip the seed data
         run: |
@@ -120,7 +130,7 @@ jobs:
           ls -la data.zip
           echo "zipped $count collections"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: data
           path: data.zip

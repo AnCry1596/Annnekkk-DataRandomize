@@ -211,3 +211,26 @@ git tag v1.0.1 && git push origin v1.0.1
 
 `data/` is committed, so the release job always has something to zip. Refresh it with
 `cargo run --bin dump` before tagging if the source database has changed.
+
+### Release fails with 403 "Resource not accessible by integration"
+
+The publishing jobs declare `permissions: contents: write`, which is what
+`GITHUB_TOKEN` needs to create a Release. If a tag build still 403s, the cause is a
+setting outside the workflow file:
+
+1. **Settings → Actions → General → Workflow permissions** — must be *Read and write
+   permissions*. If it is set to read-only, that ceiling applies no matter what the
+   workflow requests.
+2. **Organisation-level policy** — an org can force read-only for all its repos, which
+   overrides the per-repo setting above.
+3. **Tag protection / rulesets** — a rule covering `v*` can block the release.
+
+A failed release still leaves the tag pushed, so re-running means deleting and
+re-pushing it:
+
+```sh
+git push --delete origin v1.0.0
+git tag -d v1.0.0
+git tag v1.0.0
+git push origin v1.0.0
+```
