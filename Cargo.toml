@@ -1,0 +1,31 @@
+[package]
+name = "annnekkk_random_server"
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+warp = { version = "0.4", features = ["server"] }
+tokio = { version = "1", features = ["full"] }
+
+mongodb = "3"
+bson = "2"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+dotenv = "0.15"
+env_logger = "0.11"
+log = "0.4"
+anyhow = "1"
+chrono = { version = "0.4", features = ["serde"] }
+moka = { version = "0.12", features = ["future"] }
+rand = "0.8"
+futures = "0.3"
+
+# seed only: fetch + unpack data.zip from the latest GitHub release
+ureq = { version = "3", features = ["json"] }
+zip = { version = "8", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+# `warp::test` lives behind the "test" feature in warp 0.4
+warp = { version = "0.4", features = ["server", "test"] }

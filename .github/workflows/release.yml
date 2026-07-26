@@ -1,0 +1,133 @@
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+
+      # The 16 tests here need no database — they use warp::test and an
+      # unreachable Mongo URI, so CI stays hermetic.
+      - run: cargo test --all-targets
+      - run: cargo clippy --all-targets -- -D warnings
+
+  release:
+    name: release (${{ matrix.target }})
+    needs: check
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Install cross-linker
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          echo 'CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc' >> "$GITHUB_ENV"
+
+      - run: cargo build --release --bins --target ${{ matrix.target }}
+
+      - name: Stage artifacts
+        shell: bash
+        run: |
+          mkdir -p dist
+          for bin in annnekkk_random_server dump seed; do
+            src="target/${{ matrix.target }}/release/$bin"
+            # Windows targets emit .exe; plain `[ -f ... ] &&` would return
+            # non-zero on Linux and abort the step under `set -e`.
+            if [ -f "$src.exe" ]; then
+              src="$src.exe"
+            fi
+            cp "$src" dist/
+          done
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+      # Tag pushes (v1.0.0, …) additionally publish a GitHub Release.
+      - name: Package for release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          cd dist
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            7z a "../${{ matrix.target }}.zip" ./*
+          else
+            tar czf "../${{ matrix.target }}.tar.gz" ./*
+          fi
+
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          files: |
+            ${{ matrix.target }}.tar.gz
+            ${{ matrix.target }}.zip
+          fail_on_unmatched_files: false
+
+  # data.zip is the same for every target, so it is built once here rather than
+  # three times in the matrix above (which would race on upload).
+  data:
+    name: data.zip
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Zip the seed data
+        run: |
+          test -d data || { echo "::error::no data/ directory in the repo"; exit 1; }
+          count=$(find data -name '*.json' | wc -l)
+          test "$count" -gt 0 || { echo "::error::data/ has no *.json dumps"; exit 1; }
+          # Zipped from inside data/ so entries are bare filenames — `seed`
+          # flattens anyway, but this keeps the archive usable by hand.
+          (cd data && zip -9 -q ../data.zip ./*.json)
+          ls -la data.zip
+          echo "zipped $count collections"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: data
+          path: data.zip
+          if-no-files-found: error
+
+      # seed downloads this asset by name from the latest release.
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          files: data.zip
