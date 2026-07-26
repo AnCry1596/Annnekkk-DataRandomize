@@ -24,7 +24,7 @@ const BATCH: usize = 5_000;
 /// Repo to pull data.zip from, as "owner/name". No default — this project has no
 /// GitHub home yet, and a guessed slug would fail in a confusing way. Set
 /// DATA_REPO (or DATA_URL for a direct link), or just keep data/ populated.
-const REPO_ENV: &str = "DATA_REPO";
+const REPO_ENV: &str = "AnCry1596/Annnekkk-DataRandomize";
 
 /// Asset name looked for on the release.
 const ASSET: &str = "data.zip";
