@@ -49,7 +49,7 @@ pub async fn get_randomdata_v2(
         .unwrap_or_else(|| "US".to_string());
 
     let RandomData { personal, security, browser, location, misc, metadata } =
-        build_random_data(&state.snapshot, &country_code, &headers, peer, start.elapsed(), "2.2-rust");
+        build_random_data(&state.snapshot, &country_code, &headers, peer, start, "2.2-rust");
 
     Ok(reply::json(&RandomDataV2Response {
         success: true,

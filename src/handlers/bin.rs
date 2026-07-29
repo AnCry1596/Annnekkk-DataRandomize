@@ -7,6 +7,7 @@ use warp::http::StatusCode;
 use warp::reply::{self, Reply};
 
 use crate::db::BinDocument;
+use crate::handlers::shared::format_elapsed;
 use crate::models::{AppState, BinInfo, BinResponse, CachedBinData, CardInfo, ErrorResponse, Issuer, Metadata};
 
 // ── POST body: accepts {"bin": "444444"} or {"bin": 444444} ──────────────────
@@ -72,7 +73,7 @@ pub async fn lookup_bin(raw: String, state: Arc<AppState>) -> reply::Response {
             metadata: Metadata {
                 cached: true,
                 timestamp: Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
-                processing_time: format!("{}ms", start.elapsed().as_millis()),
+                processing_time: format_elapsed(start.elapsed()),
                 cache_stats: "hit".to_string(),
                 credits: "Data provided by @annnekkk (https://annnekkk.com)".to_string(),
             },
@@ -118,7 +119,7 @@ pub async fn lookup_bin(raw: String, state: Arc<AppState>) -> reply::Response {
                 metadata: Metadata {
                     cached: false,
                     timestamp: Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
-                    processing_time: format!("{}ms", start.elapsed().as_millis()),
+                    processing_time: format_elapsed(start.elapsed()),
                     cache_stats: "miss".to_string(),
                     credits: "Data provided by @annnekkk (https://annnekkk.com)".to_string(),
                 },
