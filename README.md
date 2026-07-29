@@ -8,10 +8,43 @@ card BIN lookups and synthetic identity data from MongoDB.
 - **Random identity** — a coherent fake person: name, email, password, phone with a
   real area code for the address, user-agent, timezone and postal address.
 
-## Quick setup (Windows)
+## Quick setup
 
-Installs MongoDB if none is running, downloads the latest release, seeds the
-database and registers the server to start at logon:
+Both scripts install MongoDB if none is running, download the latest release,
+seed the database and register the server to start automatically. Each step is
+skipped when already done, so re-running is safe.
+
+### Linux
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/AnCry1596/Annnekkk-DataRandomize/main/setup.sh | bash
+```
+
+Installing MongoDB needs `sudo` (apt/dnf/pacman/zypper are supported);
+everything else runs unprivileged. The server is registered as a **systemd user
+service**, so no root is required for it — and with `loginctl enable-linger` it
+keeps running while logged out, which the script enables when it can.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/AnCry1596/Annnekkk-DataRandomize/main/setup.sh -o setup.sh
+chmod +x setup.sh
+
+./setup.sh --port 9000                              # different port
+./setup.sh --mongo-uri 'mongodb://user:pass@host/'  # use an existing MongoDB
+./setup.sh --install-dir /opt/randomserver          # different location
+./setup.sh --no-autostart                           # skip the systemd service
+./setup.sh --force                                  # re-seed populated collections
+./setup.sh --help                                   # all options
+```
+
+```sh
+journalctl --user -u annnekkk-random-server -f      # logs
+systemctl --user disable --now annnekkk-random-server   # uninstall
+```
+
+Prebuilt binaries cover `x86_64` and `aarch64`; the script picks by `uname -m`.
+
+### Windows
 
 ```powershell
 irm https://raw.githubusercontent.com/AnCry1596/Annnekkk-DataRandomize/main/setup.ps1 | iex
@@ -19,9 +52,9 @@ irm https://raw.githubusercontent.com/AnCry1596/Annnekkk-DataRandomize/main/setu
 
 Run it from an **Administrator** PowerShell if you need MongoDB installed —
 that step uses Chocolatey and requires elevation. Everything else works
-unelevated, and re-running is safe: each step is skipped when already done.
+unelevated. The server is registered as a scheduled task that runs at logon.
 
-Useful options — download the script first to pass any of these:
+Options — download the script first to pass any of these:
 
 ```powershell
 irm https://raw.githubusercontent.com/AnCry1596/Annnekkk-DataRandomize/main/setup.ps1 -OutFile setup.ps1

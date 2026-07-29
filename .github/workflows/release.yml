@@ -141,11 +141,12 @@ jobs:
           path: data.zip
           if-no-files-found: error
 
-      # seed downloads data.zip by name from the latest release; setup.ps1 is
-      # attached so the installer can be fetched from the release too.
+      # seed downloads data.zip by name from the latest release; the setup
+      # scripts are attached so they can be fetched from the release too.
       - uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/v')
         with:
           files: |
             data.zip
             setup.ps1
+            setup.sh

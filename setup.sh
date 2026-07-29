@@ -76,17 +76,28 @@ warn() { printf '%s    %s%s\n' "$C_WARN" "$1" "$C_OFF" >&2; }
 die()  { printf '%serror: %s%s\n' "$C_WARN" "$1" "$C_OFF" >&2; exit 1; }
 
 # sudo only when not already root; absent sudo is reported rather than assumed.
+# -n so a missing password fails immediately: piped into bash there is no TTY,
+# and an interactive prompt would hang the script indefinitely.
 if [ "$(id -u)" -eq 0 ]; then
     SUDO=''
 elif command -v sudo >/dev/null 2>&1; then
-    SUDO='sudo'
+    SUDO='sudo -n'
 else
     SUDO=''
 fi
 
 need_root() {
-    if [ "$(id -u)" -ne 0 ] && [ -z "$SUDO" ]; then
+    [ "$(id -u)" -eq 0 ] && return 0
+    if [ -z "$SUDO" ]; then
         die "$1 needs root, and sudo is not installed. Re-run as root."
+    fi
+    # Piped into bash there is no TTY, so a sudo that wants a password would
+    # hang forever. Check up front and say so instead.
+    if ! sudo -n true 2>/dev/null; then
+        die "$1 needs root. sudo requires a password here, and this script cannot prompt.
+  Run one of these instead:
+    sudo -v && curl -fsSL <url> | bash     # cache credentials first
+    curl -fsSL <url> -o setup.sh && sudo bash setup.sh"
     fi
 }
 
@@ -310,9 +321,14 @@ EOF
 
     # User services stop at logout unless lingering is on. Best-effort: this
     # needs root, and the service still works without it while logged in.
-    if command -v loginctl >/dev/null 2>&1 && { [ -n "$SUDO" ] || [ "$(id -u)" -eq 0 ]; }; then
+    # Best effort: $SUDO carries -n, so a password prompt fails fast rather than
+    # hanging, and the service still works while logged in either way.
+    if command -v loginctl >/dev/null 2>&1; then
         if $SUDO loginctl enable-linger "$USER" >/dev/null 2>&1; then
             note 'lingering enabled - service also runs while logged out'
+        else
+            note 'service runs while logged in; for logged-out operation run:'
+            note "  sudo loginctl enable-linger $USER"
         fi
     fi
 
