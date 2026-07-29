@@ -1,5 +1,4 @@
-use crate::db::{DatabasePool, PhonePrefixDocument};
-use anyhow::Result;
+use crate::db::cache::Snapshot;
 use rand::Rng;
 
 // ---------------------------------------------------------------------------
@@ -38,49 +37,34 @@ pub fn build_phone(npa: &str, nxx: &str) -> PhoneNumber {
 }
 
 // ---------------------------------------------------------------------------
-// Async generator — pulls NPA+NXX from DB
+// Generator — pulls NPA+NXX from the in-memory snapshot
 // ---------------------------------------------------------------------------
 
 /// Generate a random phone number.
 ///
 /// Priority: city → state → country → any prefix.
-/// Each level falls through to the next if no match is found.
-pub async fn generate_phone(
-    pool: &DatabasePool,
+/// Each level falls through to the next if no match is found. The fallbacks are
+/// lazy, so a city hit costs one lookup rather than the old four round trips.
+pub fn generate_phone(
+    snap: &Snapshot,
     city: Option<&str>,
     state: Option<&str>,
     country: Option<&str>,
-) -> Result<PhoneNumber> {
-    let doc = if let Some(c) = city.filter(|s| !s.is_empty()) {
-        PhonePrefixDocument::random_by_city(pool, c, state)
-            .await?
-            .or(if let Some(s) = state.filter(|s| !s.is_empty()) {
-                PhonePrefixDocument::random_by_state(pool, s).await?
-            } else { None })
-            .or(if let Some(c) = country.filter(|s| !s.is_empty()) {
-                PhonePrefixDocument::random_by_country(pool, c).await?
-            } else { None })
-            .or(PhonePrefixDocument::random(pool).await?)
-    } else if let Some(s) = state.filter(|s| !s.is_empty()) {
-        PhonePrefixDocument::random_by_state(pool, s)
-            .await?
-            .or(if let Some(c) = country.filter(|s| !s.is_empty()) {
-                PhonePrefixDocument::random_by_country(pool, c).await?
-            } else { None })
-            .or(PhonePrefixDocument::random(pool).await?)
-    } else if let Some(c) = country.filter(|s| !s.is_empty()) {
-        PhonePrefixDocument::random_by_country(pool, c)
-            .await?
-            .or(PhonePrefixDocument::random(pool).await?)
-    } else {
-        PhonePrefixDocument::random(pool).await?
-    };
+) -> PhoneNumber {
+    let city = city.filter(|s| !s.is_empty());
+    let state = state.filter(|s| !s.is_empty());
+    let country = country.filter(|s| !s.is_empty());
 
-    let (npa, nxx) = doc
-        .map(|d| (d.npa, d.nxx))
-        .unwrap_or_else(|| ("555".to_string(), "555".to_string()));
+    let prefix = city
+        .and_then(|c| snap.phone_by_city(c, state))
+        .or_else(|| state.and_then(|s| snap.phone_by_state(s)))
+        .or_else(|| country.and_then(|c| snap.phone_by_country(c)))
+        .or_else(|| snap.phone_any());
 
-    Ok(build_phone(&npa, &nxx))
+    match prefix {
+        Some(p) => build_phone(&p.npa, &p.nxx),
+        None => build_phone("555", "555"),
+    }
 }
 
 // ---------------------------------------------------------------------------

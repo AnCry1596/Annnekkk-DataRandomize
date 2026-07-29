@@ -4,13 +4,10 @@ use std::net::SocketAddr;
 use std::time::Duration;
 use warp::http::HeaderMap;
 
-use crate::db::{
-    AddressDocument, CommentDocument, CountryDocument, DatabasePool, NameDocument,
-    TimezoneDocument, UserAgentDocument,
-};
+use crate::db::cache::Snapshot;
 use crate::utils::email_generator::generate_email_from;
 use crate::utils::password_generator::generate_password;
-use crate::utils::phone_generator::{build_phone, generate_phone};
+use crate::utils::phone_generator::generate_phone;
 
 // ── Response types ────────────────────────────────────────────────────────────
 
@@ -154,72 +151,58 @@ pub struct RandomData {
     pub metadata: MetadataInfo,
 }
 
-pub async fn build_random_data(
-    pool: &DatabasePool,
+/// Assemble a random identity. Every field is served from the in-memory
+/// snapshot, so this performs zero MongoDB queries.
+pub fn build_random_data(
+    snap: &Snapshot,
     country_code: &str,
     headers: &HeaderMap,
     peer: Option<SocketAddr>,
     elapsed: Duration,
     version: &str,
 ) -> RandomData {
-    let (first_res, last_res, tz_res, ua_res, addr_res, comment_res) = tokio::join!(
-        NameDocument::random_first(pool),
-        NameDocument::random_last(pool),
-        TimezoneDocument::random(pool),
-        UserAgentDocument::random(pool),
-        AddressDocument::random_by_country(pool, country_code),
-        CommentDocument::random(pool),
-    );
-
-    let first = first_res.unwrap_or(None).unwrap_or_else(|| "John".to_string());
-    let last  = last_res.unwrap_or(None).unwrap_or_else(|| "Smith".to_string());
+    let first = snap.first_name().unwrap_or("John").to_string();
+    let last  = snap.last_name().unwrap_or("Smith").to_string();
     let fullname = format!("{} {}", first, last);
 
-    let addr = addr_res.unwrap_or(None);
+    let addr = snap.address_by_country(country_code);
 
-    let email = generate_email_from(pool, &first, &last)
-        .await
-        .unwrap_or_else(|_| "user@example.com".to_string());
+    let email = generate_email_from(snap, &first, &last);
 
-    let addr_city    = addr.as_ref().map(|a| a.city.clone()).unwrap_or_default();
-    let addr_state   = addr.as_ref().map(|a| a.state.clone()).unwrap_or_default();
-    let addr_country = addr.as_ref().and_then(|a| a.country.clone())
-        .unwrap_or_else(|| country_code.to_string());
+    let addr_city    = addr.map(|a| a.city.as_str()).unwrap_or_default();
+    let addr_state   = addr.map(|a| a.state.as_str()).unwrap_or_default();
+    let addr_country = addr.and_then(|a| a.country.as_deref()).unwrap_or(country_code);
 
-    let phone = generate_phone(pool, Some(&addr_city), Some(&addr_state), Some(&addr_country))
-        .await
-        .unwrap_or_else(|_| build_phone("555", "555"));
+    let phone = generate_phone(snap, Some(addr_city), Some(addr_state), Some(addr_country));
 
-    let tz = tz_res.unwrap_or(None);
-    let time_zone = tz.as_ref().map(|t| t.name.clone())
+    let tz = snap.timezone();
+    let time_zone = tz.map(|t| t.name.clone())
         .unwrap_or_else(|| "America/New_York".to_string());
-    let tz_offset = tz.as_ref().map(|t| t.offset).unwrap_or(-300);
+    let tz_offset = tz.map(|t| t.offset).unwrap_or(-300);
 
-    let comment = comment_res.unwrap_or(None).unwrap_or_else(|| "All the best!".to_string());
+    let comment = snap.comment().unwrap_or("All the best!").to_string();
 
-    let ua = ua_res.unwrap_or(None).unwrap_or_else(|| {
+    let ua = snap.user_agent().unwrap_or(
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
-         (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36".to_string()
-    });
+         (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    ).to_string();
 
-    let country_doc = CountryDocument::by_code_and_state(pool, country_code, &addr_state)
-        .await
-        .unwrap_or(None);
+    let country_doc = snap.country_by_code_and_state(country_code, addr_state);
 
-    let (country_id, resolved_country_code, country_name) = match &country_doc {
+    let (country_id, resolved_country_code, country_name) = match country_doc {
         Some(c) => (c.country_id, c.country_code.clone(), Some(c.country_name.clone())),
         None    => (None, country_code.to_string(), None),
     };
 
     let address_info = AddressInfo {
-        address1:    addr.as_ref().map(|a| a.address1.clone()).unwrap_or_default(),
-        address2:    addr.as_ref().and_then(|a| a.address2.clone()).unwrap_or_default(),
-        city:        addr.as_ref().map(|a| a.city.clone()).unwrap_or_default(),
-        state:       addr.as_ref().map(|a| a.state.clone()).unwrap_or_default(),
-        state_name:  country_doc.as_ref().and_then(|c| c.state_name.clone()),
-        region:      country_doc.as_ref().and_then(|c| c.state_name.clone()),
-        region_id:   country_doc.as_ref().and_then(|c| c.state_id),
-        postal_code: addr.as_ref().map(|a| a.postal_code.clone()).unwrap_or_default(),
+        address1:    addr.map(|a| a.address1.clone()).unwrap_or_default(),
+        address2:    addr.and_then(|a| a.address2.clone()).unwrap_or_default(),
+        city:        addr.map(|a| a.city.clone()).unwrap_or_default(),
+        state:       addr.map(|a| a.state.clone()).unwrap_or_default(),
+        state_name:  country_doc.and_then(|c| c.state_name.clone()),
+        region:      country_doc.and_then(|c| c.state_name.clone()),
+        region_id:   country_doc.and_then(|c| c.state_id),
+        postal_code: addr.map(|a| a.postal_code.clone()).unwrap_or_default(),
         country_id,
         country_code: resolved_country_code,
         country_name,

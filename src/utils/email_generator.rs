@@ -1,23 +1,16 @@
-use crate::db::{DatabasePool, DomainDocument, WordDocument};
-use anyhow::Result;
+use crate::db::cache::Snapshot;
 use rand::Rng;
 
 // ---------------------------------------------------------------------------
-// DB helpers
+// Cache helpers — these used to be per-request `$sample` queries.
 // ---------------------------------------------------------------------------
 
-async fn db_word(pool: &DatabasePool) -> String {
-    WordDocument::random(pool)
-        .await
-        .unwrap_or(None)
-        .unwrap_or_else(|| "cool".to_string())
+fn word(snap: &Snapshot) -> String {
+    snap.word().unwrap_or("cool").to_string()
 }
 
-async fn db_domain(pool: &DatabasePool) -> String {
-    DomainDocument::random(pool)
-        .await
-        .unwrap_or(None)
-        .unwrap_or_else(|| "gmail.com".to_string())
+fn domain(snap: &Snapshot) -> String {
+    snap.domain().unwrap_or("gmail.com").to_string()
 }
 
 // ---------------------------------------------------------------------------
@@ -97,10 +90,8 @@ pub fn fmt_name_word_suffix(first: &str, last: &str, word: &str) -> String {
 }
 
 /// Generate a username using the provided first/last names instead of fetching new ones.
-/// Only fetches a random word from the DB when the chosen pattern needs one.
-pub async fn generate_username_from(pool: &DatabasePool, first: &str, last: &str) -> String {
-    // ponytail: all draws taken up-front so ThreadRng (!Send) never crosses an .await —
-    // warp requires Send futures, unlike actix.
+/// Words come from the in-memory snapshot, so this no longer touches MongoDB.
+pub fn generate_username_from(snap: &Snapshot, first: &str, last: &str) -> String {
     let (pattern, year, d2, d3) = {
         let mut rng = rand::thread_rng();
         (
@@ -115,10 +106,10 @@ pub async fn generate_username_from(pool: &DatabasePool, first: &str, last: &str
         0  => fmt_dot(first, last),
         1  => fmt_underscore(first, last),
         2  => fmt_name_year(first, last, year),
-        3  => fmt_name_word(first, &db_word(pool).await),
+        3  => fmt_name_word(first, &word(snap)),
         4  => fmt_name_digits(first, d2),
         5  => fmt_dot_digits(first, last, d2),
-        6  => fmt_word_name(&db_word(pool).await, first),
+        6  => fmt_word_name(&word(snap), first),
         7  => {
             let initial = last.chars().next().unwrap_or('s');
             fmt_name_initial_digits(first, initial, d3)
@@ -127,14 +118,13 @@ pub async fn generate_username_from(pool: &DatabasePool, first: &str, last: &str
         9  => fmt_initial_last(first, last),
         10 => fmt_last_underscore_first(first, last),
         11 => fmt_dot_dot_digits(first, last, d2),
-        12 => fmt_word_underscore_name_digits(&db_word(pool).await, first, d2),
-        _  => fmt_name_word_suffix(first, last, &db_word(pool).await),
+        12 => fmt_word_underscore_name_digits(&word(snap), first, d2),
+        _  => fmt_name_word_suffix(first, last, &word(snap)),
     }
 }
 
 /// Generate an email using pre-fetched first/last names.
-pub async fn generate_email_from(pool: &DatabasePool, first: &str, last: &str) -> Result<String> {
-    let username = generate_username_from(pool, first, last).await;
-    let domain = db_domain(pool).await;
-    Ok(format!("{}@{}", username.to_lowercase(), domain))
+pub fn generate_email_from(snap: &Snapshot, first: &str, last: &str) -> String {
+    let username = generate_username_from(snap, first, last);
+    format!("{}@{}", username.to_lowercase(), domain(snap))
 }

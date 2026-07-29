@@ -41,7 +41,6 @@ pub async fn get_randomdata_v2(
     state: Arc<AppState>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
     let start = Instant::now();
-    let pool = &state.db;
 
     let country_code = query
         .country
@@ -50,7 +49,7 @@ pub async fn get_randomdata_v2(
         .unwrap_or_else(|| "US".to_string());
 
     let RandomData { personal, security, browser, location, misc, metadata } =
-        build_random_data(pool, &country_code, &headers, peer, start.elapsed(), "2.2-rust").await;
+        build_random_data(&state.snapshot, &country_code, &headers, peer, start.elapsed(), "2.2-rust");
 
     Ok(reply::json(&RandomDataV2Response {
         success: true,

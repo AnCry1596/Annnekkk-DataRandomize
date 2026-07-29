@@ -98,7 +98,11 @@ async fn main() -> Result<()> {
         .time_to_live(Duration::from_secs(3600))
         .build();
 
-    let app_state = Arc::new(AppState { db, bin_cache });
+    // Reference data is read-only between seeds, so load it once instead of
+    // running 9-12 $sample aggregations per request.
+    let snapshot = db::cache::Snapshot::load(&db).await?;
+
+    let app_state = Arc::new(AppState { db, bin_cache, snapshot });
 
     let ip: IpAddr = host.parse().unwrap_or_else(|_| [127, 0, 0, 1].into());
     let addr = SocketAddr::new(ip, port);
@@ -132,6 +136,9 @@ mod tests {
         Arc::new(AppState {
             db: DatabasePool { db: client.database("test") },
             bin_cache: Cache::builder().max_capacity(10).build(),
+            // Empty: randomdatav2 falls back to defaults, as it did when the
+            // per-request queries failed against an unreachable DB.
+            snapshot: db::cache::Snapshot::empty(),
         })
     }
 

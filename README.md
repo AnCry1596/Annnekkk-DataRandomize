@@ -8,8 +8,45 @@ card BIN lookups and synthetic identity data from MongoDB.
 - **Random identity** — a coherent fake person: name, email, password, phone with a
   real area code for the address, user-agent, timezone and postal address.
 
+## Quick setup (Windows)
+
+Installs MongoDB if none is running, downloads the latest release, seeds the
+database and registers the server to start at logon:
+
+```powershell
+irm https://raw.githubusercontent.com/AnCry1596/Annnekkk-DataRandomize/main/setup.ps1 | iex
+```
+
+Run it from an **Administrator** PowerShell if you need MongoDB installed —
+that step uses Chocolatey and requires elevation. Everything else works
+unelevated, and re-running is safe: each step is skipped when already done.
+
+Useful options — download the script first to pass any of these:
+
+```powershell
+irm https://raw.githubusercontent.com/AnCry1596/Annnekkk-DataRandomize/main/setup.ps1 -OutFile setup.ps1
+
+.\setup.ps1 -Port 9000                              # different port
+.\setup.ps1 -MongoUri 'mongodb://user:pass@host/'   # use an existing MongoDB
+.\setup.ps1 -InstallDir D:\tools\randomserver       # different location
+.\setup.ps1 -NoAutoStart                            # skip the startup task
+.\setup.ps1 -Force                                  # re-seed populated collections
+```
+
+To remove the startup entry:
+
+```powershell
+Unregister-ScheduledTask -TaskName AnnnekkkRandomServer -Confirm:$false
+```
+
+## From source
+
+`.env.example` points at a local MongoDB, so with one running on the default
+port no edit is needed:
+
 ```sh
-cp .env.example .env      # point MONGODB_URI at your server
+cp .env.example .env      # edit MONGODB_URI for a remote server
+cargo run --bin seed -- mongodb://localhost:27017/   # first run only
 cargo run                 # http://127.0.0.1:8080
 ```
 

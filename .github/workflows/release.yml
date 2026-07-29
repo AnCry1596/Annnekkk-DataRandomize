@@ -81,6 +81,9 @@ jobs:
             fi
             cp "$src" dist/
           done
+          # Ship a ready-to-run .env pointing at a local MongoDB, so an
+          # unpacked archive starts without any hand-editing.
+          cp .env.example dist/.env
           ls -la dist
 
       - uses: actions/upload-artifact@v5
@@ -95,10 +98,12 @@ jobs:
         shell: bash
         run: |
           cd dist
+          # `./*` skips dotfiles in both tools, which would drop the bundled
+          # .env — `.` archives the directory contents including it.
           if [ "$RUNNER_OS" = "Windows" ]; then
-            7z a "../${{ matrix.target }}.zip" ./*
+            7z a "../${{ matrix.target }}.zip" .
           else
-            tar czf "../${{ matrix.target }}.tar.gz" ./*
+            tar czf "../${{ matrix.target }}.tar.gz" .
           fi
 
       - uses: softprops/action-gh-release@v2
@@ -136,8 +141,11 @@ jobs:
           path: data.zip
           if-no-files-found: error
 
-      # seed downloads this asset by name from the latest release.
+      # seed downloads data.zip by name from the latest release; setup.ps1 is
+      # attached so the installer can be fetched from the release too.
       - uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/v')
         with:
-          files: data.zip
+          files: |
+            data.zip
+            setup.ps1

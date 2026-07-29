@@ -1,6 +1,7 @@
 use moka::future::Cache;
 use serde::{Deserialize, Serialize};
 
+use crate::db::cache::Snapshot;
 use crate::db::DatabasePool;
 
 /// Card type and classification info
@@ -73,4 +74,6 @@ pub struct CachedBinData {
 pub struct AppState {
     pub db: DatabasePool,
     pub bin_cache: Cache<i64, CachedBinData>,
+    /// Reference data loaded once at startup — see `db::cache`.
+    pub snapshot: Snapshot,
 }
