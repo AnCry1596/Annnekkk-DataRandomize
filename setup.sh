@@ -136,21 +136,102 @@ mongo_up() {
     fi
 }
 
+MONGO_MAJOR="${MONGO_MAJOR:-8.0}"
+
+# Add MongoDB's official apt repo. Ubuntu 22.04+ and Debian 12+ dropped the
+# distro-packaged mongodb entirely, so this is the only apt route on any
+# current release.
+add_mongo_apt_repo() {
+    local id codename suite url
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    id="${ID:-}"
+    # VERSION_CODENAME is absent on some derivatives; fall back to the parent.
+    codename="${VERSION_CODENAME:-}"
+    [ -z "$codename" ] && codename="${UBUNTU_CODENAME:-}"
+
+    case "$id" in
+        ubuntu|linuxmint|pop|elementary|zorin) url='https://repo.mongodb.org/apt/ubuntu'; suite="$codename" ;;
+        debian|raspbian)                       url='https://repo.mongodb.org/apt/debian'; suite="$codename" ;;
+        *)  # Derivatives set ID_LIKE; use it to pick the right pool.
+            case "${ID_LIKE:-}" in
+                *ubuntu*) url='https://repo.mongodb.org/apt/ubuntu'; suite="$codename" ;;
+                *debian*) url='https://repo.mongodb.org/apt/debian'; suite="$codename" ;;
+                *) return 1 ;;
+            esac ;;
+    esac
+
+    # Only suites MongoDB actually publishes. An unknown codename (a very new
+    # or very old release) maps to the closest supported one.
+    case "$suite" in
+        focal|jammy|noble|bookworm|trixie) ;;
+        # Ubuntu derivatives commonly track these bases.
+        una|vanessa|vera|victoria|virginia) suite='jammy' ;;
+        wilma|xia|zara)                     suite='noble' ;;
+        *)
+            case "$url" in
+                *ubuntu) suite='noble' ;;
+                *)       suite='bookworm' ;;
+            esac
+            note "unrecognised codename '${codename:-none}' - using $suite packages" ;;
+    esac
+
+    note "adding MongoDB $MONGO_MAJOR repo ($suite)"
+    $SUDO apt-get install -y -qq curl gnupg ca-certificates >/dev/null 2>&1 || true
+    $SUDO install -d -m 0755 /usr/share/keyrings
+
+    # gpg --dearmor writes a binary keyring; signed-by pins the repo to it.
+    curl -fsSL "https://pgp.mongodb.com/server-${MONGO_MAJOR}.asc" \
+        | $SUDO gpg --dearmor --yes -o "/usr/share/keyrings/mongodb-server-${MONGO_MAJOR}.gpg" \
+        || return 1
+
+    local component='main'
+    case "$url" in *debian) component='main' ;; *) component='multiverse' ;; esac
+
+    printf 'deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-%s.gpg ] %s %s/mongodb-org/%s %s\n' \
+        "$MONGO_MAJOR" "$url" "$suite" "$MONGO_MAJOR" "$component" \
+        | $SUDO tee "/etc/apt/sources.list.d/mongodb-org-${MONGO_MAJOR}.list" >/dev/null || return 1
+
+    $SUDO apt-get update -qq
+}
+
 install_mongo() {
     need_root 'installing MongoDB'
 
     if command -v apt-get >/dev/null 2>&1; then
         note 'installing mongodb via apt-get'
-        $SUDO apt-get update -qq
-        # Debian/Ubuntu ship this as mongodb-server; newer releases only have
-        # the mongodb package. Try both before giving up.
-        $SUDO apt-get install -y -qq mongodb-server 2>/dev/null \
-            || $SUDO apt-get install -y -qq mongodb \
-            || die "no mongodb package in apt. Install MongoDB from https://www.mongodb.com/docs/manual/administration/install-on-linux/ and re-run."
+        $SUDO apt-get update -qq || true
+        # Try the distro package first — present on older releases and already
+        # mirrored locally. Current releases have neither, so fall through to
+        # MongoDB's own repo.
+        if $SUDO apt-get install -y -qq mongodb-server >/dev/null 2>&1 \
+            || $SUDO apt-get install -y -qq mongodb >/dev/null 2>&1; then
+            :
+        else
+            add_mongo_apt_repo \
+                || die "cannot add the MongoDB apt repo. Install it manually: https://www.mongodb.com/docs/manual/administration/install-on-linux/"
+            $SUDO apt-get install -y -qq mongodb-org \
+                || die "installing mongodb-org failed. See https://www.mongodb.com/docs/manual/administration/install-on-linux/"
+        fi
     elif command -v dnf >/dev/null 2>&1; then
         note 'installing mongodb via dnf'
-        $SUDO dnf install -y mongodb-server \
-            || die "no mongodb-server package in dnf. Install MongoDB from https://www.mongodb.com/docs/manual/administration/install-on-linux/ and re-run."
+        # Fedora/RHEL dropped mongodb-server too; fall back to MongoDB's repo.
+        if ! $SUDO dnf install -y mongodb-server >/dev/null 2>&1; then
+            local rel
+            # shellcheck disable=SC1091
+            . /etc/os-release
+            case "${ID:-}" in
+                fedora) rel=9 ;;   # no Fedora pool; the el9 packages work
+                *)      rel="$(printf '%s' "${VERSION_ID:-9}" | cut -d. -f1)" ;;
+            esac
+            note "adding MongoDB $MONGO_MAJOR repo (el$rel)"
+            printf '[mongodb-org-%s]\nname=MongoDB\nbaseurl=https://repo.mongodb.org/yum/redhat/%s/mongodb-org/%s/x86_64/\ngpgcheck=1\nenabled=1\ngpgkey=https://pgp.mongodb.com/server-%s.asc\n' \
+                "$MONGO_MAJOR" "$rel" "$MONGO_MAJOR" "$MONGO_MAJOR" \
+                | $SUDO tee "/etc/yum.repos.d/mongodb-org-${MONGO_MAJOR}.repo" >/dev/null \
+                || die "cannot add the MongoDB yum repo. Install it manually: https://www.mongodb.com/docs/manual/administration/install-on-linux/"
+            $SUDO dnf install -y mongodb-org \
+                || die "installing mongodb-org failed. See https://www.mongodb.com/docs/manual/administration/install-on-linux/"
+        fi
     elif command -v pacman >/dev/null 2>&1; then
         note 'installing mongodb via pacman'
         # Arch moved mongodb to the AUR; mongodb-bin is the usual stand-in.
@@ -164,14 +245,35 @@ install_mongo() {
         die "no supported package manager found (apt-get, dnf, pacman, zypper). Install MongoDB manually and re-run."
     fi
 
-    # Package names for the service differ across distros.
+    # Package names for the service differ across distros: the distro packages
+    # use mongodb, MongoDB's own use mongod.
     if command -v systemctl >/dev/null 2>&1; then
-        for svc in mongod mongodb; do
-            if systemctl list-unit-files 2>/dev/null | grep -q "^${svc}\.service"; then
-                $SUDO systemctl enable --now "$svc" >/dev/null 2>&1 || true
-                break
-            fi
+        local started='' svc attempt
+        # The unit file lands during dpkg configuration and is not visible to
+        # systemd until it reloads, so look on disk (authoritative the moment
+        # dpkg writes it) and retry briefly rather than trusting one lookup.
+        for attempt in 1 2 3 4 5; do
+            $SUDO systemctl daemon-reload >/dev/null 2>&1 || true
+            for svc in mongod mongodb; do
+                if [ -f "/usr/lib/systemd/system/${svc}.service" ] \
+                    || [ -f "/lib/systemd/system/${svc}.service" ] \
+                    || [ -f "/etc/systemd/system/${svc}.service" ]; then
+                    started="$svc"
+                    break
+                fi
+            done
+            [ -n "$started" ] && break
+            sleep 2
         done
+
+        if [ -n "$started" ]; then
+            # Report failure rather than swallowing it — a service that never
+            # starts is the difference between working and not.
+            $SUDO systemctl enable --now "$started" >/dev/null 2>&1 \
+                || warn "systemctl enable --now $started failed"
+        else
+            warn 'no mongod/mongodb service unit found to start'
+        fi
     fi
 }
 
@@ -194,8 +296,10 @@ else
             until mongo_up "$MONGO_URI" || [ "$(date +%s)" -ge "$deadline" ]; do
                 sleep 2
             done
-            mongo_up "$MONGO_URI" \
-                || die 'MongoDB was installed but never started listening. Check: systemctl status mongod'
+            mongo_up "$MONGO_URI" || die "MongoDB was installed but never started listening. Check:
+    systemctl status mongod
+    journalctl -u mongod -n 50
+    tail /var/log/mongodb/mongod.log"
             ok "installed and listening on $MHOST:$MPORT"
             ;;
         *)
